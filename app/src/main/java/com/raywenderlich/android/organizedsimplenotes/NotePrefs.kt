@@ -31,6 +31,14 @@
 package com.raywenderlich.android.organizedsimplenotes
 
 import android.content.SharedPreferences
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.runBlocking
+import java.io.IOException
 
 private const val KEY_APP_BACKGROUND_COLOR = "key_app_background_color"
 private const val DEFAULT_COLOR = "Green"
@@ -39,39 +47,59 @@ private const val DEFAULT_PRIORITY_FILTER = "1"
 private const val KEY_NOTE_SORT_PREFERENCE = "note_sort_preference"
 private const val KEY_NOTE_PRIORITY_SET = "note_priority_set"
 
-class NotePrefs(private val sharedPrefs: SharedPreferences) {
+class NotePrefs(
+    private val sharedPrefs: SharedPreferences,
+    private val dataStore: DataStore<Preferences>
+) {
 
-  fun saveNoteSortOrder(noteSortOrder: NoteSortOrder) {
-    sharedPrefs.edit()
-        .putString(KEY_NOTE_SORT_PREFERENCE, noteSortOrder.name)
-        .apply()
-  }
+    suspend fun saveNoteSortOrder(noteSortOrder: NoteSortOrder) {
+        dataStore.edit { preferences ->
+            preferences[NOTE_SORT_ORDER] = noteSortOrder.name
+        }
+    }
 
-  fun getNoteSortOrder() = NoteSortOrder.valueOf(
-      sharedPrefs.getString(KEY_NOTE_SORT_PREFERENCE, DEFAULT_SORT_ORDER)
-          ?: DEFAULT_SORT_ORDER
-  )
+    fun getNoteSortOrder() = runBlocking {
+        NoteSortOrder.valueOf(dataStore.data.first()[NOTE_SORT_ORDER] ?: DEFAULT_SORT_ORDER)
+    }
 
-  fun saveNotePriorityFilters(priorities: Set<String>) {
-    sharedPrefs.edit()
-        .putStringSet(KEY_NOTE_PRIORITY_SET, priorities)
-        .apply()
-  }
+    suspend fun saveNotePriorityFilters(priorities: Set<String>) {
+        dataStore.edit { preferences ->
+            preferences[NOTE_PRIORITY_SET] = priorities
+        }
+    }
 
-  fun getNotePriorityFilters(): Set<String> =
-      sharedPrefs.getStringSet(KEY_NOTE_PRIORITY_SET, setOf(DEFAULT_PRIORITY_FILTER))
-          ?: setOf(DEFAULT_PRIORITY_FILTER)
+    fun getNotePriorityFilters() = runBlocking {
+        dataStore.data.first()[NOTE_PRIORITY_SET] ?: setOf(DEFAULT_PRIORITY_FILTER)
+    }
 
-  fun saveNoteBackgroundColor(noteBackgroundColor: String) {
-    sharedPrefs.edit()
-        .putString(KEY_APP_BACKGROUND_COLOR, noteBackgroundColor)
-        .apply()
-  }
+    suspend fun saveNoteBackgroundColor(noteBackgroundColor: String) {
+        dataStore.edit { preferences ->
+            preferences[BACKGROUND_COLOR] = noteBackgroundColor
+        }
+    }
 
-  fun getAppBackgroundColor(): AppBackgroundColor =
-      AppBackgroundColor.getColorByName(DEFAULT_COLOR)
+    fun getAppBackgroundColor(): AppBackgroundColor =
+        runBlocking {
+            AppBackgroundColor.getColorByName(dataStore.data.first()[BACKGROUND_COLOR] ?: DEFAULT_COLOR)
+        }
 
-  companion object {
-    const val PREFS_NAME = "user_preferences"
-  }
+    val userPreferencesFlow: Flow<UserPreferences> = dataStore.data
+        .catch { exception ->
+            if (exception is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw exception
+            }
+        }.map { preferences ->
+            val backgroundColor =  AppBackgroundColor.getColorByName(preferences[BACKGROUND_COLOR] ?: DEFAULT_COLOR)
+            UserPreferences(backgroundColor)
+        }
+
+    companion object {
+        const val PREFS_NAME = "user_preferences"
+        private val BACKGROUND_COLOR = stringPreferencesKey("key_app_background_color")
+        private val NOTE_SORT_ORDER = stringPreferencesKey("note_sort_preference")
+        private val NOTE_PRIORITY_SET = stringSetPreferencesKey("note_priority_set")
+
+    }
 }

@@ -33,207 +33,236 @@ package com.raywenderlich.android.organizedsimplenotes
 import android.app.Dialog
 import android.content.Context
 import android.os.Bundle
+import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
 import android.view.Window
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import androidx.appcompat.app.AppCompatActivity
+import androidx.datastore.preferences.SharedPreferencesMigration
+import androidx.datastore.preferences.preferencesDataStore
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.raywenderlich.android.organizedsimplenotes.NoteSortOrder.*
 import com.raywenderlich.android.organizedsimplenotes.databinding.ActivityMainBinding
+import kotlinx.coroutines.flow.collect
 
 
-// TODO: add DataStore property delegate
+private val Context.dataStore by preferencesDataStore(
+    name = NotePrefs.PREFS_NAME,
+    produceMigrations = { context ->
+        listOf(SharedPreferencesMigration(context, NotePrefs.PREFS_NAME))
+    }
+)
 
 class MainActivity : AppCompatActivity(), NoteDialogFragment.NoticeNoteDialogListener {
 
-  private val PRIORITY_ONE = "1"
-  private val PRIORITY_TWO = "2"
-  private val PRIORITY_THREE = "3"
-
-  private lateinit var binding: ActivityMainBinding
-
-  private val notePrefs: NotePrefs by lazy {
-    NotePrefs(applicationContext.getSharedPreferences(NotePrefs.PREFS_NAME, Context.MODE_PRIVATE))
-  }
-
-  private val noteAdapter: NoteAdapter by lazy {
-    NoteAdapter(this,
-        priorities,
-        notePrefs.getNoteSortOrder(),
-        ::showEditNoteDialog
-    )
-  }
-  private val priorities by lazy { notePrefs.getNotePriorityFilters().toMutableSet() }
-
-  override fun onCreate(savedInstanceState: Bundle?) {
-    super.onCreate(savedInstanceState)
-
-    binding = ActivityMainBinding.inflate(layoutInflater)
-    setContentView(binding.root)
-
-    binding.recyclerView.layoutManager = LinearLayoutManager(this)
-    binding.recyclerView.adapter = noteAdapter
-    binding.fab.setOnClickListener { showAddNoteDialog() }
-
-    // TODO: replace with Flow collect
-    changeNotesBackgroundColor(getCurrentBackgroundColorInt())
-  }
-
-  private fun showAddNoteDialog() {
-    val newFragment = NoteDialogFragment.newInstance(listener = this)
-    newFragment.show(supportFragmentManager, "notes")
-  }
-
-  private fun showEditNoteDialog(note: Note) {
-    val newFragment = NoteDialogFragment.newInstance(note, this)
-    newFragment.show(supportFragmentManager, "notes")
-  }
-
-  override fun onCreateOptionsMenu(menu: Menu): Boolean {
-    super.onCreateOptionsMenu(menu)
-    menuInflater.inflate(R.menu.menu_note, menu)
-
-    when (notePrefs.getNoteSortOrder()) {
-      FILENAME_ASC -> menu.findItem(R.id.sort_by_filename_asc).isChecked = true
-      FILENAME_DESC -> menu.findItem(R.id.sort_by_filename_desc).isChecked = true
-      DATE_LAST_MOD_ASC -> menu.findItem(R.id.sort_by_date_last_modified_asc).isChecked = true
-      DATE_LAST_MOD_DESC -> menu.findItem(R.id.sort_by_date_last_modified_desc).isChecked = true
-      PRIORITY_ASC -> menu.findItem(R.id.sort_by_priority_asc).isChecked = true
-      PRIORITY_DESC -> menu.findItem(R.id.sort_by_priority_desc).isChecked = true
+    private val notePrefs: NotePrefs by lazy {
+        NotePrefs(
+            applicationContext.getSharedPreferences(NotePrefs.PREFS_NAME, Context.MODE_PRIVATE),
+            dataStore
+        )
     }
 
-    menu.findItem(R.id.priority_1).isChecked = priorities.contains(PRIORITY_ONE)
-    menu.findItem(R.id.priority_2).isChecked = priorities.contains(PRIORITY_TWO)
-    menu.findItem(R.id.priority_3).isChecked = priorities.contains(PRIORITY_THREE)
-    return true
-  }
+    private val PRIORITY_ONE = "1"
+    private val PRIORITY_TWO = "2"
+    private val PRIORITY_THREE = "3"
 
-  override fun onOptionsItemSelected(item: MenuItem): Boolean {
+    private lateinit var binding: ActivityMainBinding
 
-    return when (item.itemId) {
-      // Background color preference selected
-      R.id.change_note_background_color -> {
-        showNoteBackgroundColorDialog()
-        true
-      }
-      R.id.sort_by_date_last_modified_asc -> {
-        item.isChecked = true
-        updateNoteSortOrder(DATE_LAST_MOD_ASC)
-        true
-      }
-      R.id.sort_by_date_last_modified_desc -> {
-        item.isChecked = true
-        updateNoteSortOrder(DATE_LAST_MOD_DESC)
-        true
-      }
-      R.id.sort_by_filename_asc -> {
-        item.isChecked = true
-        updateNoteSortOrder(FILENAME_ASC)
-        true
-      }
-      R.id.sort_by_filename_desc -> {
-        item.isChecked = true
-        updateNoteSortOrder(FILENAME_DESC)
-        true
-      }
-      R.id.sort_by_priority_asc -> {
-        item.isChecked = true
-        updateNoteSortOrder(PRIORITY_ASC)
-        true
-      }
-      R.id.sort_by_priority_desc -> {
-        item.isChecked = true
-        updateNoteSortOrder(PRIORITY_DESC)
-        true
-      }
-      R.id.priority_1 -> {
-        item.isChecked = !item.isChecked
-        togglePriorityState(PRIORITY_ONE, item.isChecked)
+    private val noteAdapter: NoteAdapter by lazy {
+        NoteAdapter(
+            this,
+            priorities,
+            notePrefs.getNoteSortOrder(),
+            ::showEditNoteDialog
+        )
+    }
+    private val priorities by lazy { notePrefs.getNotePriorityFilters().toMutableSet() }
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        binding.recyclerView.layoutManager = LinearLayoutManager(this)
+        binding.recyclerView.adapter = noteAdapter
+        binding.fab.setOnClickListener { showAddNoteDialog() }
+
+        try {
+            lifecycleScope.launchWhenCreated {
+                notePrefs.userPreferencesFlow.collect { userPreferences ->
+                    changeNotesBackgroundColor(userPreferences.backgroundColor.intColor)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", e.localizedMessage)
+        }
+    }
+
+    private fun showAddNoteDialog() {
+        val newFragment = NoteDialogFragment.newInstance(listener = this)
+        newFragment.show(supportFragmentManager, "notes")
+    }
+
+    private fun showEditNoteDialog(note: Note) {
+        val newFragment = NoteDialogFragment.newInstance(note, this)
+        newFragment.show(supportFragmentManager, "notes")
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        super.onCreateOptionsMenu(menu)
+        menuInflater.inflate(R.menu.menu_note, menu)
+
+        when (notePrefs.getNoteSortOrder()) {
+            FILENAME_ASC -> menu.findItem(R.id.sort_by_filename_asc).isChecked = true
+            FILENAME_DESC -> menu.findItem(R.id.sort_by_filename_desc).isChecked = true
+            DATE_LAST_MOD_ASC -> menu.findItem(R.id.sort_by_date_last_modified_asc).isChecked = true
+            DATE_LAST_MOD_DESC -> menu.findItem(R.id.sort_by_date_last_modified_desc).isChecked =
+                true
+            PRIORITY_ASC -> menu.findItem(R.id.sort_by_priority_asc).isChecked = true
+            PRIORITY_DESC -> menu.findItem(R.id.sort_by_priority_desc).isChecked = true
+        }
+
+        menu.findItem(R.id.priority_1).isChecked = priorities.contains(PRIORITY_ONE)
+        menu.findItem(R.id.priority_2).isChecked = priorities.contains(PRIORITY_TWO)
+        menu.findItem(R.id.priority_3).isChecked = priorities.contains(PRIORITY_THREE)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+
+        return when (item.itemId) {
+            // Background color preference selected
+            R.id.change_note_background_color -> {
+                showNoteBackgroundColorDialog()
+                true
+            }
+            R.id.sort_by_date_last_modified_asc -> {
+                item.isChecked = true
+                updateNoteSortOrder(DATE_LAST_MOD_ASC)
+                true
+            }
+            R.id.sort_by_date_last_modified_desc -> {
+                item.isChecked = true
+                updateNoteSortOrder(DATE_LAST_MOD_DESC)
+                true
+            }
+            R.id.sort_by_filename_asc -> {
+                item.isChecked = true
+                updateNoteSortOrder(FILENAME_ASC)
+                true
+            }
+            R.id.sort_by_filename_desc -> {
+                item.isChecked = true
+                updateNoteSortOrder(FILENAME_DESC)
+                true
+            }
+            R.id.sort_by_priority_asc -> {
+                item.isChecked = true
+                updateNoteSortOrder(PRIORITY_ASC)
+                true
+            }
+            R.id.sort_by_priority_desc -> {
+                item.isChecked = true
+                updateNoteSortOrder(PRIORITY_DESC)
+                true
+            }
+            R.id.priority_1 -> {
+                item.isChecked = !item.isChecked
+                togglePriorityState(PRIORITY_ONE, item.isChecked)
+
+                updateNotePrioritiesFilter(priorities)
+                true
+            }
+            R.id.priority_2 -> {
+                item.isChecked = !item.isChecked
+                togglePriorityState(PRIORITY_TWO, item.isChecked)
+                true
+            }
+            R.id.priority_3 -> {
+                item.isChecked = !item.isChecked
+                togglePriorityState(PRIORITY_THREE, item.isChecked)
+                true
+            }
+            else -> return super.onOptionsItemSelected(item)
+        }
+    }
+
+    private fun togglePriorityState(priority: String, isActive: Boolean) {
+        if (isActive) {
+            priorities.add(priority)
+        } else {
+            priorities.remove(priority)
+        }
         updateNotePrioritiesFilter(priorities)
-        true
-      }
-      R.id.priority_2 -> {
-        item.isChecked = !item.isChecked
-        togglePriorityState(PRIORITY_TWO, item.isChecked)
-        true
-      }
-      R.id.priority_3 -> {
-        item.isChecked = !item.isChecked
-        togglePriorityState(PRIORITY_THREE, item.isChecked)
-        true
-      }
-      else -> return super.onOptionsItemSelected(item)
     }
-  }
 
-  private fun togglePriorityState(priority: String, isActive: Boolean) {
-    if (isActive) {
-      priorities.add(priority)
-    } else {
-      priorities.remove(priority)
+    private fun showNoteBackgroundColorDialog() {
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.setContentView(R.layout.dialog_radio_group)
+
+        val radioGroup = dialog.findViewById(R.id.radio_group) as RadioGroup
+        val greenButton = dialog.findViewById<RadioButton>(R.id.greenOption)
+        val orangeButton = dialog.findViewById<RadioButton>(R.id.orangeOption)
+        val purpleButton = dialog.findViewById<RadioButton>(R.id.purpleOption)
+
+        val radioButtons = setOf(greenButton, orangeButton, purpleButton)
+
+        val currentBackgroundColor = getCurrentBackgroundColorString()
+        greenButton.isChecked = greenButton.text == currentBackgroundColor
+        orangeButton.isChecked = orangeButton.text == currentBackgroundColor
+        purpleButton.isChecked = purpleButton.text == currentBackgroundColor
+
+        radioGroup.setOnCheckedChangeListener { _, checkedId ->
+            val selectedRadioButton = radioButtons.firstOrNull { it.id == checkedId }
+
+            if (selectedRadioButton != null) {
+                lifecycleScope.launchWhenStarted {
+                    notePrefs.saveNoteBackgroundColor(selectedRadioButton.text.toString())
+                }
+            }
+        }
+        dialog.show()
     }
-    updateNotePrioritiesFilter(priorities)
-  }
 
-  private fun showNoteBackgroundColorDialog() {
-    val dialog = Dialog(this)
-    dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-    dialog.setContentView(R.layout.dialog_radio_group)
+    private fun changeNotesBackgroundColor(color: Int) =
+        window.decorView.setBackgroundResource(color)
 
-    val radioGroup = dialog.findViewById(R.id.radio_group) as RadioGroup
-    val greenButton = dialog.findViewById<RadioButton>(R.id.greenOption)
-    val orangeButton = dialog.findViewById<RadioButton>(R.id.orangeOption)
-    val purpleButton = dialog.findViewById<RadioButton>(R.id.purpleOption)
+    private fun getCurrentBackgroundColorString(): String =
+        notePrefs.getAppBackgroundColor().displayString
 
-    val radioButtons = setOf(greenButton, orangeButton, purpleButton)
+    private fun getCurrentBackgroundColorInt(): Int = notePrefs.getAppBackgroundColor().intColor
 
-    val currentBackgroundColor = getCurrentBackgroundColorString()
-    greenButton.isChecked = greenButton.text == currentBackgroundColor
-    orangeButton.isChecked = orangeButton.text == currentBackgroundColor
-    purpleButton.isChecked = purpleButton.text == currentBackgroundColor
+    override fun onNoteDialogNeutralClick(note: Note) = noteAdapter.deleteNote(note.fileName)
 
-    radioGroup.setOnCheckedChangeListener { _, checkedId ->
-      val selectedRadioButton = radioButtons.firstOrNull { it.id == checkedId }
-
-      if (selectedRadioButton != null) {
-        // TODO: replace with coroutine call
-        notePrefs.saveNoteBackgroundColor(selectedRadioButton.text.toString())
-        changeNotesBackgroundColor(getCurrentBackgroundColorInt())
-      }
+    override fun onNoteDialogPositiveClick(note: Note, isEdited: Boolean) {
+        if (isEdited) {
+            noteAdapter.editNote(note)
+        } else {
+            if (noteAdapter.addNote(note)) {
+                showToast("Note Was Added Successfully!")
+            } else {
+                showToast("That File Already Exists.")
+            }
+        }
     }
-    dialog.show()
-  }
 
-  private fun changeNotesBackgroundColor(color: Int) = window.decorView.setBackgroundResource(color)
-
-  private fun getCurrentBackgroundColorString(): String = notePrefs.getAppBackgroundColor().displayString
-
-  private fun getCurrentBackgroundColorInt(): Int = notePrefs.getAppBackgroundColor().intColor
-
-  override fun onNoteDialogNeutralClick(note: Note) = noteAdapter.deleteNote(note.fileName)
-
-  override fun onNoteDialogPositiveClick(note: Note, isEdited: Boolean) {
-    if (isEdited) {
-      noteAdapter.editNote(note)
-    } else {
-      if (noteAdapter.addNote(note)) {
-        showToast("Note Was Added Successfully!")
-      } else {
-        showToast("That File Already Exists.")
-      }
+    private fun updateNoteSortOrder(sortOrder: NoteSortOrder) {
+        noteAdapter.updateNotesFilters(order = sortOrder)
+        lifecycleScope.launchWhenStarted {
+            notePrefs.saveNoteSortOrder(sortOrder)
+        }
     }
-  }
 
-  private fun updateNoteSortOrder(sortOrder: NoteSortOrder) {
-    noteAdapter.updateNotesFilters(order = sortOrder)
-    notePrefs.saveNoteSortOrder(sortOrder)
-  }
+    private fun updateNotePrioritiesFilter(priorities: Set<String>) {
+        noteAdapter.updateNotesFilters(priorities = priorities)
+        lifecycleScope.launchWhenStarted {
+            notePrefs.saveNotePriorityFilters(priorities)
+        }
+    }
 
-  private fun updateNotePrioritiesFilter(priorities: Set<String>) {
-    noteAdapter.updateNotesFilters(priorities = priorities)
-    notePrefs.saveNotePriorityFilters(priorities)
-  }
 }
